@@ -98,7 +98,7 @@
             showToast("Uploading...");
             try {
                 const res = await fetch("/upload", { method: "POST", headers: headers(), body: data });
-                const json = await res.json(); if(!res.ok) throw new Error(typeof json.detail === \"string\" ? json.detail : JSON.stringify(json.detail));
+                const json = await res.json(); if(!res.ok) throw new Error(typeof json.detail === "string" ? json.detail : JSON.stringify(json.detail));
                 document.getElementById(pathId).value = json.file_path;
                 showToast("Upload Successful!");
             } catch(e) { showToast(e.message); }
@@ -129,7 +129,7 @@
             showToast("Starting Engine...");
             try {
                 const res = await fetch("/start", { method: "POST", headers: headers(), body: d });
-                const json = await res.json(); if(!res.ok) throw new Error(typeof json.detail === \"string\" ? json.detail : JSON.stringify(json.detail));
+                const json = await res.json(); if(!res.ok) throw new Error(typeof json.detail === "string" ? json.detail : JSON.stringify(json.detail));
                 showToast(json.message); checkStatus();
             } catch(e) { showToast(e.message); }
         };
@@ -137,7 +137,7 @@
         const stopStream = async () => {
             try {
                 const res = await fetch("/stop", { method: "POST", headers: headers() });
-                const json = await res.json(); if(!res.ok) throw new Error(typeof json.detail === \"string\" ? json.detail : JSON.stringify(json.detail));
+                const json = await res.json(); if(!res.ok) throw new Error(typeof json.detail === "string" ? json.detail : JSON.stringify(json.detail));
                 showToast(json.message); checkStatus();
             } catch(e) { showToast(e.message); }
         };
@@ -146,7 +146,7 @@
             const d = new FormData(); d.append("custom_text", document.getElementById("customText").value);
             try {
                 const res = await fetch("/update-text", { method: "POST", headers: headers(), body: d });
-                const json = await res.json(); if(!res.ok) throw new Error(typeof json.detail === \"string\" ? json.detail : JSON.stringify(json.detail));
+                const json = await res.json(); if(!res.ok) throw new Error(typeof json.detail === "string" ? json.detail : JSON.stringify(json.detail));
                 showToast(json.message);
             } catch(e) { showToast(e.message); }
         };
