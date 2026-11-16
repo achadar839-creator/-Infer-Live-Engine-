@@ -1,94 +1,348 @@
-import os, time, subprocess, threading, random, string
+import os
+import time
+import shutil
+import logging
+import subprocess
+import threading
+
 from pathlib import Path
 
-LOG_DIR = Path("logs")
+BASE_DIR = Path(__file__).resolve().parent
+
+STORAGE_ROOT = Path(
+    os.getenv("STORAGE_DIR", str(BASE_DIR))
+).resolve()
+
+DATA_DIR = STORAGE_ROOT / "data"
+LOG_DIR = STORAGE_ROOT / "logs"
+
+DATA_DIR.mkdir(parents=True, exist_ok=True)
+LOG_DIR.mkdir(parents=True, exist_ok=True)
+
+TICKER_FILE = DATA_DIR / "ticker.txt"
+GLITCH_FILE = DATA_DIR / "glitch.txt"
+HOST_FILE = DATA_DIR / "host.txt"
+
+for path in (TICKER_FILE, GLITCH_FILE, HOST_FILE):
+    if not path.exists():
+        path.write_text("", encoding="utf-8")
+
+logger = logging.getLogger("infer-live.streamer")
+
 
 class StreamManager:
+
     def __init__(self):
+
         self.process = None
         self.running = False
-        self.lock = threading.Lock()
+
+        self.lock = threading.RLock()
         self.stop_event = threading.Event()
+
         self.config = {}
-        self.ticker_file = Path("data/ticker.txt").resolve()
-        self.glitch_file = Path("data/glitch.txt").resolve()
-        self.host_file = Path("data/host.txt").resolve()
+
+        self.started_at = None
+        self.last_error = None
+        self.restart_count = 0
+
+        self.ticker_file = TICKER_FILE
 
     def update_text(self, text):
-        self.ticker_file.write_text(str(text).replace("\x00", ""), encoding="utf-8")
+
+        safe_text = str(text).replace("\x00", "")
+
+        temporary = self.ticker_file.with_suffix(".tmp")
+
+        temporary.write_text(
+            safe_text,
+            encoding="utf-8"
+        )
+
+        temporary.replace(self.ticker_file)
 
     def build_filter(self):
-        def esc(p): return p.as_posix().replace("\\", "\\\\").replace(":", "\\:").replace("'", "\\'")
-        t_path, g_path, h_path = esc(self.ticker_file), esc(self.glitch_file), esc(self.host_file)
-        vf = []
-        
-        # 0. SHORTS / VERTICAL MODE CROP (1080x1920)
-        if self.config.get("layout") == "shorts":
-            vf.append("scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920")
-            
-        if self.config.get("feat_pan") == "true": vf.append("zoompan=z='min(zoom+0.0010,1.15)':d=300:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)'")
-        if self.config.get("feat_wea") == "true": vf.append("eq=brightness='0.02*sin(t/15)':saturation='1.1+0.2*cos(t/15)'")
-        if self.config.get("feat_vis") == "true": vf.append("hue=s='1.0+0.3*sin(t*4)'")
-            
-        vf.append("drawtext=text='LIVE':fontcolor=white:fontsize=32:x=w-tw-20:y=20:box=1:boxcolor=black@0.5")
-        vf.append(f"drawtext=textfile='{t_path}':reload=1:fontcolor=yellow:fontsize=28:y=h-th-20:x=w-mod(t*50\\,w+tw):box=1:boxcolor=black@0.6")
-        
-        if self.config.get("feat_gli") == "true": vf.append(f"drawtext=textfile='{g_path}':reload=1:fontcolor=white:fontsize=70:x=(w-tw)/2:y=(h-th)/2:box=1:boxcolor=red@0.8")
-        if self.config.get("feat_hos") == "true": vf.append(f"drawtext=textfile='{h_path}':reload=1:fontcolor=0x00e5a0:fontsize=40:x=30:y=100:box=1:boxcolor=black@0.8")
-        return ",".join(vf)
+
+        filters = []
+
+        layout = self.config.get(
+            "layout", "landscape"
+        )
+
+        # Landscape 16:9
+        if layout == "landscape":
+
+            filters.append(
+                "scale=1920:1080:"
+                "force_original_aspect_ratio=decrease"
+            )
+
+            filters.append(
+                "pad=1920:1080:(ow-iw)/2:(oh-ih)/2"
+            )
+
+        # Shorts 9:16
+        elif layout == "shorts":
+
+            filters.append(
+                "scale=1080:1920:"
+                "force_original_aspect_ratio=decrease"
+            )
+
+            filters.append(
+                "pad=1080:1920:(ow-iw)/2:(oh-ih)/2"
+            )
+
+        filters.append("setsar=1")
+
+        # Live Ticker
+        ticker_path = str(
+            self.ticker_file.resolve()
+        ).replace("\\", "/")
+
+        ticker_path = ticker_path.replace(
+            "'", "\\'"
+        )
+
+        filters.append(
+            "drawtext="
+            f"textfile='{ticker_path}':"
+            "reload=1:"
+            "fontcolor=yellow:"
+            "fontsize=28:"
+            "x=20:"
+            "y=h-th-30:"
+            "box=1:"
+            "boxcolor=black@0.6"
+        )
+
+        return ",".join(filters)
 
     def start(self, config):
+
         with self.lock:
-            if self.running: return False
+
+            if self.running:
+                return False
+
+            if not shutil.which("ffmpeg"):
+                self.last_error = "FFmpeg executable not found"
+                return False
+
             self.config = config.copy()
-            self.update_text(config.get("custom_text", ""))
+
             self.stop_event.clear()
+
+            self.started_at = time.time()
+            self.last_error = None
+            self.restart_count = 0
+
             self.running = True
-            threading.Thread(target=self._worker, daemon=True).start()
-            threading.Thread(target=self._glitch_worker, daemon=True).start()
-            threading.Thread(target=self._host_worker, daemon=True).start()
+
+            self.update_text(
+                self.config.get("custom_text", "")
+            )
+
+            thread = threading.Thread(
+                target=self._worker,
+                daemon=True,
+                name="InferLiveWorker"
+            )
+
+            thread.start()
+
             return True
 
-    def _glitch_worker(self):
-        while not self.stop_event.is_set():
-            time.sleep(random.randint(15, 40))
-            if self.config.get("feat_gli") == "true":
-                self.glitch_file.write_text(f" [GLITCH REWARD: BOUNTY-{''.join(random.choices(string.ascii_uppercase, k=5))}] ")
-                time.sleep(0.5)
-                self.glitch_file.write_text("")
+    def _build_command(self):
 
-    def _host_worker(self):
-        msgs = ["AI HOST: Next bounty code dropping soon...", "AI HOST: Keep chatting!"]
-        while not self.stop_event.is_set():
-            time.sleep(random.randint(25, 60))
-            if self.config.get("feat_hos") == "true":
-                self.host_file.write_text(f" {random.choice(msgs)} ")
-                time.sleep(10)
-                self.host_file.write_text("")
+        stream_key = self.config["stream_key"]
+
+        video_path = self.config["video_path"]
+
+        output_url = (
+            "rtmp://a.rtmp.youtube.com/live2/"
+            + stream_key
+        )
+
+        cmd = [
+            "ffmpeg",
+            "-hide_banner",
+            "-loglevel", "warning",
+
+            "-stream_loop", "-1",
+            "-re",
+
+            "-i", video_path,
+
+            "-map", "0:v:0",
+            "-map", "0:a:0?",
+
+            "-vf", self.build_filter(),
+
+            "-c:v", "libx264",
+            "-preset", "veryfast",
+            "-tune", "zerolatency",
+
+            "-pix_fmt", "yuv420p",
+            "-r", "30",
+
+            "-b:v", "4500k",
+            "-maxrate", "4500k",
+            "-bufsize", "9000k",
+
+            "-c:a", "aac",
+            "-b:a", "128k",
+            "-ar", "44100",
+
+            "-f", "flv",
+            output_url
+        ]
+
+        return cmd
 
     def _worker(self):
+
         try:
+
             while not self.stop_event.is_set():
-                cmd = ["ffmpeg", "-hide_banner", "-loglevel", "warning", "-stream_loop", "-1", "-re", "-i", self.config["video_path"], "-vf", self.build_filter(), "-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p", "-b:v", "4500k", "-c:a", "aac", "-b:a", "128k", "-f", "flv", "rtmp://a.rtmp.youtube.com/live2/" + self.config["stream_key"]]
-                with (LOG_DIR / "ffmpeg.log").open("ab") as fl:
-                    self.process = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=fl, start_new_session=True)
-                while not self.stop_event.is_set():
-                    if self.process.poll() is not None: break
-                    time.sleep(2)
-                if self.process and self.process.poll() is None:
-                    self.process.terminate()
-                    try: self.process.wait(timeout=5)
-                    except: self.process.kill()
-                break
+
+                process = None
+
+                try:
+
+                    cmd = self._build_command()
+
+                    log_path = LOG_DIR / "ffmpeg.log"
+
+                    with log_path.open("ab") as log_file:
+
+                        process = subprocess.Popen(
+                            cmd,
+                            stdout=subprocess.DEVNULL,
+                            stderr=log_file,
+                            start_new_session=True
+                        )
+
+                    with self.lock:
+                        self.process = process
+
+                    logger.info(
+                        "FFmpeg process started: PID %s",
+                        process.pid
+                    )
+
+                    while not self.stop_event.is_set():
+
+                        return_code = process.poll()
+
+                        if return_code is not None:
+                            break
+
+                        time.sleep(2)
+
+                    if self.stop_event.is_set():
+
+                        if process.poll() is None:
+
+                            process.terminate()
+
+                            try:
+                                process.wait(timeout=10)
+
+                            except subprocess.TimeoutExpired:
+                                process.kill()
+                                process.wait(timeout=5)
+
+                        break
+
+                    return_code = process.poll()
+
+                    self.last_error = (
+                        f"FFmpeg exited with code {return_code}"
+                    )
+
+                    logger.error(self.last_error)
+
+                    self.restart_count += 1
+
+                    # Retry after unexpected FFmpeg exit.
+                    self.stop_event.wait(5)
+
+                except Exception as exc:
+
+                    self.last_error = str(exc)
+
+                    logger.exception(
+                        "Streaming worker error"
+                    )
+
+                    self.restart_count += 1
+
+                    self.stop_event.wait(5)
+
+                finally:
+
+                    with self.lock:
+
+                        if self.process is process:
+                            self.process = None
+
+                    if process is not None and process.poll() is None:
+
+                        try:
+                            process.kill()
+                            process.wait(timeout=5)
+                        except Exception:
+                            pass
+
         finally:
+
             with self.lock:
-                self.running = False
+
                 self.process = None
+                self.running = False
+                self.started_at = None
+
+            logger.info("Streaming worker stopped")
 
     def stop(self):
+
         self.stop_event.set()
 
+        with self.lock:
+            process = self.process
+
+        if process is not None and process.poll() is None:
+
+            try:
+                process.terminate()
+            except Exception:
+                pass
+
     def status(self):
-        return {"running": self.running}
+
+        with self.lock:
+
+            active = (
+                self.process is not None
+                and self.process.poll() is None
+            )
+
+            uptime = 0
+
+            if self.started_at is not None:
+                uptime = int(
+                    time.time() - self.started_at
+                )
+
+            return {
+                "running": self.running,
+                "ffmpeg_active": active,
+                "uptime_seconds": uptime,
+                "restart_count": self.restart_count,
+                "last_error": self.last_error,
+                "layout": self.config.get("layout")
+            }
+
 
 stream_manager = StreamManager()

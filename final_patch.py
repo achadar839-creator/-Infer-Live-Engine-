@@ -1326,6 +1326,7 @@ try:
         )
 
         backup_file = BACKUP / filename
+        backup_file.parent.mkdir(parents=True, exist_ok=True)
 
         shutil.copy2(
             destination,
