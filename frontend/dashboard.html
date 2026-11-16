@@ -87,7 +87,7 @@
     </div>
 
     <script>
-        const showToast = (msg) => { const t = document.getElementById("toast"); t.textContent = msg; t.style.display = "block"; setTimeout(()=>t.style.display="none", 3000); };
+        const showToast = (msg) => { const t = document.getElementById("toast"); t.textContent = typeof msg === "object" ? (msg.message || msg.error || JSON.stringify(msg)) : msg; t.style.display = "block"; setTimeout(()=>t.style.display="none", 3000); };
         document.getElementById("apiToken").value = sessionStorage.getItem("apiToken") || "";
         const saveToken = () => { sessionStorage.setItem("apiToken", document.getElementById("apiToken").value); showToast("Token Saved!"); };
         const headers = () => ({ "X-API-Key": sessionStorage.getItem("apiToken") || "" });
