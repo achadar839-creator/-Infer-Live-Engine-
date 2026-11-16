@@ -1,6 +1,3 @@
-cd ~/Infer-Live-Engine || exit 1
-
-cat << 'EOF' > patch.py
 from pathlib import Path
 from datetime import datetime
 import shutil
@@ -1379,16 +1376,4 @@ except Exception as error:
     print("Original files restored.")
 
     sys.exit(1)
-
-EOF
-
-python3 patch.py || exit 1
-
-echo
-echo "========== GIT STATUS =========="
-
-git status --short
-
-echo
-echo "========== COMMIT AND PUSH =========="
 
