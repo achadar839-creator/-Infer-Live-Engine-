@@ -30,7 +30,7 @@ class StreamManager:
         if self.config.get("feat_wea") == "true": vf.append("eq=brightness='0.02*sin(t/15)':saturation='1.1+0.2*cos(t/15)'")
         if self.config.get("feat_vis") == "true": vf.append("hue=s='1.0+0.3*sin(t*4)'")
             
-        vf.append("drawtext=text="LIVE 🔴":fontcolor=white:fontsize=32:x=w-tw-20:y=20:box=1:boxcolor=black@0.5")
+        vf.append("drawtext=text='LIVE':fontcolor=white:fontsize=32:x=w-tw-20:y=20:box=1:boxcolor=black@0.5")
         vf.append(f"drawtext=textfile='{t_path}':reload=1:fontcolor=yellow:fontsize=28:y=h-th-20:x=w-mod(t*50\\,w+tw):box=1:boxcolor=black@0.6")
         
         if self.config.get("feat_gli") == "true": vf.append(f"drawtext=textfile='{g_path}':reload=1:fontcolor=white:fontsize=70:x=(w-tw)/2:y=(h-th)/2:box=1:boxcolor=red@0.8")
