@@ -1,0 +1,18 @@
+services:
+  - type: web
+    name: infer-live-engine
+    runtime: docker
+    plan: starter
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /health
+    disk:
+      name: infer-live-storage
+      mountPath: /var/data
+      sizeGB: 20
+    envVars:
+      - key: API_TOKEN
+        generateValue: true
+      - key: STREAM_SECRET_KEY
+        generateValue: true
+      - key: STORAGE_DIR
+        value: /var/data
