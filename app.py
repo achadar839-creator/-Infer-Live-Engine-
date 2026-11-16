@@ -83,7 +83,7 @@ def health():
     }
 
 
-@app.post("/upload_disabled")
+@app.post("/upload")
 async def upload_file(
     file: UploadFile = File(...),
     auth=Depends(authenticate)
