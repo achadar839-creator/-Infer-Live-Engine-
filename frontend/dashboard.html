@@ -87,7 +87,7 @@
     </div>
 
     <script>
-        const showToast = (msg) => { const t = document.getElementById("toast"); t.textContent = typeof msg === "object" ? (msg.message || msg.error || JSON.stringify(msg)) : msg; t.style.display = "block"; setTimeout(()=>t.style.display="none", 3000); };
+        const showToast = (msg) => { const t = document.getElementById("toast"); let txt = msg; if(typeof msg === "object") txt = JSON.stringify(msg); if(String(txt).includes("[object Object]")) { txt = "⚠️ Error: Form Incomplete! Upload Video, Thumbnail & enter Stream Key."; } t.textContent = txt; t.style.display = "block"; setTimeout(()=>t.style.display="none", 3000); };
         document.getElementById("apiToken").value = sessionStorage.getItem("apiToken") || "";
         const saveToken = () => { sessionStorage.setItem("apiToken", document.getElementById("apiToken").value); showToast("Token Saved!"); };
         const headers = () => ({ "X-API-Key": sessionStorage.getItem("apiToken") || "" });
@@ -98,7 +98,7 @@
             showToast("Uploading...");
             try {
                 const res = await fetch("/upload", { method: "POST", headers: headers(), body: data });
-                const json = await res.json(); if(!res.ok) throw new Error(json.detail);
+                const json = await res.json(); if(!res.ok) throw new Error(typeof json.detail === \"string\" ? json.detail : JSON.stringify(json.detail));
                 document.getElementById(pathId).value = json.file_path;
                 showToast("Upload Successful!");
             } catch(e) { showToast(e.message); }
@@ -129,7 +129,7 @@
             showToast("Starting Engine...");
             try {
                 const res = await fetch("/start", { method: "POST", headers: headers(), body: d });
-                const json = await res.json(); if(!res.ok) throw new Error(json.detail);
+                const json = await res.json(); if(!res.ok) throw new Error(typeof json.detail === \"string\" ? json.detail : JSON.stringify(json.detail));
                 showToast(json.message); checkStatus();
             } catch(e) { showToast(e.message); }
         };
@@ -137,7 +137,7 @@
         const stopStream = async () => {
             try {
                 const res = await fetch("/stop", { method: "POST", headers: headers() });
-                const json = await res.json(); if(!res.ok) throw new Error(json.detail);
+                const json = await res.json(); if(!res.ok) throw new Error(typeof json.detail === \"string\" ? json.detail : JSON.stringify(json.detail));
                 showToast(json.message); checkStatus();
             } catch(e) { showToast(e.message); }
         };
@@ -146,7 +146,7 @@
             const d = new FormData(); d.append("custom_text", document.getElementById("customText").value);
             try {
                 const res = await fetch("/update-text", { method: "POST", headers: headers(), body: d });
-                const json = await res.json(); if(!res.ok) throw new Error(json.detail);
+                const json = await res.json(); if(!res.ok) throw new Error(typeof json.detail === \"string\" ? json.detail : JSON.stringify(json.detail));
                 showToast(json.message);
             } catch(e) { showToast(e.message); }
         };
