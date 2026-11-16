@@ -3,6 +3,7 @@ from pathlib import Path
 from fastapi import FastAPI, HTTPException, UploadFile, File, Form, Depends, Header
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
+import models
 from database import init_db, get_db
 from streamer import stream_manager
 from dotenv import load_dotenv
@@ -10,7 +11,9 @@ from dotenv import load_dotenv
 load_dotenv()
 app = FastAPI(title="Infer Live Engine (Pro Edition)")
 BASE_DIR = Path(__file__).resolve().parent
-UPLOAD_DIR = BASE_DIR / "uploads"
+STORAGE_DIR = Path(os.getenv("STORAGE_DIR", BASE_DIR))
+UPLOAD_DIR = STORAGE_DIR / "uploads"
+UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 UPLOAD_DIR.mkdir(exist_ok=True)
 API_TOKEN = os.getenv("API_TOKEN", "chandan_live_99")
 ALLOWED_EXTENSIONS = {".mp4", ".mkv", ".mov", ".webm", ".jpg", ".png", ".jpeg"}
@@ -22,6 +25,9 @@ def startup():
 def authenticate(x_api_key: str = Header(default="")):
     if not secrets.compare_digest(x_api_key, API_TOKEN):
         raise HTTPException(status_code=401, detail="Unauthorized")
+
+@app.get("/health")
+def health_check(): return {"status": "ok"}
 
 @app.get("/")
 def dashboard():
