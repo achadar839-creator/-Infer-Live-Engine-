@@ -46,54 +46,49 @@ class StreamManager:
         temporary.write_text(safe_text, encoding="utf-8")
         temporary.replace(self.ticker_file)
 
+    def _has_audio(self, video_path: str) -> bool:
+        if not shutil.which("ffprobe"):
+            return False
+        try:
+            res = subprocess.run(
+                [
+                    "ffprobe", "-v", "error",
+                    "-select_streams", "a:0",
+                    "-show_entries", "stream=codec_type",
+                    "-of", "csv=p=0", video_path
+                ],
+                capture_output=True,
+                text=True,
+                timeout=5
+            )
+            return "audio" in res.stdout.lower()
+        except Exception:
+            return False
+
     def build_filter(self):
         filters = []
-        layout = self.config.get("layout", "landscape")
+        layout = self.config.get("layout", "shorts")
 
         if layout == "landscape":
             filters += [
-                "scale=1920:1080:force_original_aspect_ratio=decrease",
-                "pad=1920:1080:(ow-iw)/2:(oh-ih)/2"
+                "scale=1280:720:force_original_aspect_ratio=decrease",
+                "pad=1280:720:(ow-iw)/2:(oh-ih)/2",
+                "format=yuv420p"
             ]
-        elif layout == "shorts":
+        else:
             filters += [
-                "scale=1080:1920:force_original_aspect_ratio=decrease",
-                "pad=1080:1920:(ow-iw)/2:(oh-ih)/2"
+                "scale=720:1280:force_original_aspect_ratio=decrease",
+                "pad=720:1280:(ow-iw)/2:(oh-ih)/2",
+                "format=yuv420p"
             ]
 
         filters.append("setsar=1")
-
-        ticker = self.ticker_file.as_posix()
-        glitch = self.glitch_file.as_posix()
-        host = self.host_file.as_posix()
-
-        if self.config.get("feat_pan") == "true":
-            filters.append("zoompan=z='min(zoom+0.0010,1.15)':d=300:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)'")
 
         if self.config.get("feat_wea") == "true":
             filters.append("eq=brightness=0.02:saturation=1.1")
 
         if self.config.get("feat_vis") == "true":
-            filters.append("hue=s=1.2")
-
-        custom_txt = self.config.get("custom_text", "").strip()
-        if custom_txt:
-            filters.append(
-                f"drawtext=textfile='{ticker}':reload=1:fontcolor=yellow:fontsize=28:"
-                "y=h-th-20:x=w-mod(t*50\\,w+tw):box=1:boxcolor=black@0.6"
-            )
-
-        if self.config.get("feat_gli") == "true" and self.glitch_file.read_text(encoding="utf-8").strip():
-            filters.append(
-                f"drawtext=textfile='{glitch}':reload=1:fontcolor=white:"
-                "fontsize=70:x=(w-tw)/2:y=(h-th)/2:box=1:boxcolor=red@0.8"
-            )
-
-        if self.config.get("feat_hos") == "true" and self.host_file.read_text(encoding="utf-8").strip():
-            filters.append(
-                f"drawtext=textfile='{host}':reload=1:fontcolor=0x00e5a0:"
-                "fontsize=40:x=30:y=100:box=1:boxcolor=black@0.8"
-            )
+            filters.append("hue=s=1.15")
 
         return ",".join(filters)
 
@@ -124,44 +119,77 @@ class StreamManager:
             return True
 
     def _build_command(self):
-        stream_key = self.config["stream_key"]
+        stream_key = self.config["stream_key"].strip()
         video_path = self.config["video_path"]
-        output_url = "rtmp://a.rtmp.youtube.com/live2/" + stream_key
+
+        if stream_key.startswith("rtmp://") or stream_key.startswith("rtmps://"):
+            output_url = stream_key
+        else:
+            output_url = f"rtmp://a.rtmp.youtube.com/live2/{stream_key}"
+
+        has_audio = self._has_audio(video_path)
 
         cmd = [
             "ffmpeg",
             "-hide_banner",
             "-loglevel", "warning",
+            "-fflags", "+genpts+igndts",
             "-stream_loop", "-1",
             "-re",
             "-i", video_path,
+        ]
+
+        if not has_audio:
+            cmd += [
+                "-f", "lavfi",
+                "-i", "anullsrc=channel_layout=stereo:sample_rate=44100"
+            ]
+
+        cmd += [
             "-map", "0:v:0",
-            "-map", "0:a:0?",
+            "-map", "0:a:0" if has_audio else "1:a:0",
             "-vf", self.build_filter(),
             "-c:v", "libx264",
-            "-preset", "veryfast",
+            "-preset", "ultrafast",
             "-tune", "zerolatency",
             "-pix_fmt", "yuv420p",
             "-r", "30",
             "-g", "60",
-            "-b:v", "4500k",
-            "-maxrate", "4500k",
-            "-bufsize", "9000k",
+            "-keyint_min", "60",
+            "-sc_threshold", "0",
+            "-b:v", "2500k",
+            "-maxrate", "2500k",
+            "-bufsize", "5000k",
             "-c:a", "aac",
             "-b:a", "128k",
             "-ar", "44100",
             "-f", "flv",
+            "-flvflags", "no_duration_filesize",
             output_url
         ]
         return cmd
 
+    def _read_last_log_line(self, log_path: Path) -> str:
+        try:
+            if not log_path.exists():
+                return ""
+            lines = [
+                ln.strip()
+                for ln in log_path.read_text(encoding="utf-8", errors="ignore").splitlines()
+                if ln.strip()
+            ]
+            return lines[-1][-180:] if lines else ""
+        except Exception:
+            return ""
+
     def _worker(self):
+        log_path = LOG_DIR / "ffmpeg.log"
         try:
             while not self.stop_event.is_set():
                 process = None
                 try:
+                    log_path.write_text("", encoding="utf-8")
                     cmd = self._build_command()
-                    log_path = LOG_DIR / "ffmpeg.log"
 
                     with log_path.open("ab") as log_file:
                         process = subprocess.Popen(
@@ -186,23 +214,24 @@ class StreamManager:
                         if process.poll() is None:
                             process.terminate()
                             try:
-                                process.wait(timeout=10)
+                                process.wait(timeout=8)
                             except subprocess.TimeoutExpired:
                                 process.kill()
-                                process.wait(timeout=5)
+                                process.wait(timeout=4)
                         break
 
                     return_code = process.poll()
-                    self.last_error = f"FFmpeg exited with code {return_code}"
+                    detail = self._read_last_log_line(log_path)
+                    self.last_error = f"Exit {return_code}: {detail}" if detail else f"FFmpeg exited ({return_code})"
                     logger.error(self.last_error)
                     self.restart_count += 1
-                    self.stop_event.wait(5)
+                    self.stop_event.wait(4)
 
                 except Exception as exc:
                     self.last_error = str(exc)
                     logger.exception("Streaming worker error")
                     self.restart_count += 1
-                    self.stop_event.wait(5)
+                    self.stop_event.wait(4)
 
                 finally:
                     with self.lock:
@@ -211,7 +240,7 @@ class StreamManager:
                     if process is not None and process.poll() is None:
                         try:
                             process.kill()
-                            process.wait(timeout=5)
+                            process.wait(timeout=4)
                         except Exception:
                             pass
         finally:
@@ -241,7 +270,7 @@ class StreamManager:
                 "uptime_seconds": uptime,
                 "restart_count": self.restart_count,
                 "last_error": self.last_error,
-                "layout": self.config.get("layout", "landscape"),
+                "layout": self.config.get("layout", "shorts"),
                 "active_user": self.config.get("user_email", ""),
                 "video_path": self.config.get("video_path", "")
             }
