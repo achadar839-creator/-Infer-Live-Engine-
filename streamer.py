@@ -95,8 +95,12 @@ class StreamManager:
             filters.append("eq=contrast=1.15:saturation=1.2")
         if self.config.get("stone_3") == "true" or self.config.get("feat_3") == "true" or self.config.get("stone_glitch") == "true":
             filters.append("rgbashift=rh=2:bv=2")
+        
         if self.config.get("stone_4") == "true" or self.config.get("feat_4") == "true" or self.config.get("stone_ghost") == "true":
-            filters.append("drawtext=text='REALRULERR 24/7':fontcolor=cyan:fontsize=36:x=30:y=30:box=1:boxcolor=black@0.4")
+            bs = chr(92)
+            t_path = str(self.ticker_file).replace(bs, "/").replace(":", bs + ":")
+            filters.append(f"drawtext=textfile='{t_path}':reload=1:fontcolor=cyan:fontsize=36:x=30:y=30:box=1:boxcolor=black@0.4")
+            
         if self.config.get("stone_5") == "true" or self.config.get("feat_5") == "true" or self.config.get("stone_pan") == "true":
             filters.append("zoompan=z='min(zoom+0.0005,1.05)':d=1:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)'")
 
